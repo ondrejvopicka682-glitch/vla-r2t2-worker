@@ -1,10 +1,22 @@
 # RunPod serverless worker for Confucius4-R2T2 (CUDA, Transformers backend).
 # Deliberately NOT qwen-asr[vllm] -- see handler.py for why the Transformers
 # backend was chosen for this first deployment.
-runpod
-qwen-asr
-torch
-librosa
-soundfile
-huggingface_hub
-accelerate
+#
+# torch / torchvision / torchaudio are intentionally NOT listed here.
+# The base image (runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04)
+# already ships a torch==2.4.0+cu124 / torchvision pair built against the
+# same CUDA toolkit. qwen-asr's real dependency chain (accelerate>=2.0.0;
+# transformers, which only requires torch via optional extras we don't use)
+# is satisfied by that pre-installed torch. Previously this file listed a
+# bare, unpinned "torch" entry, which let pip's resolver install a fresh
+# torch build from the default PyPI index -- not the cu124-matched one the
+# base image's torchvision was compiled against. That ABI mismatch is what
+# produced: RuntimeError: operator torchvision::nms does not exist.
+# Do not add torch/torchvision/torchaudio back here without pinning them to
+# versions built for cu124 and re-verifying the smoke check in Dockerfile.
+runpod==1.12.0
+qwen-asr==0.0.6
+librosa==1.0.0
+soundfile==0.14.0
+huggingface_hub==1.32.0
+accelerate==1.12.0
