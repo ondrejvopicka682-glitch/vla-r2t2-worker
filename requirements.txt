@@ -14,9 +14,15 @@
 # produced: RuntimeError: operator torchvision::nms does not exist.
 # Do not add torch/torchvision/torchaudio back here without pinning them to
 # versions built for cu124 and re-verifying the smoke check in Dockerfile.
+#
+# IMPORTANT: this file must be installed WITHOUT --ignore-installed (see
+# Dockerfile). That flag is not scoped to a single package -- applied to
+# the whole install command it makes pip disregard every package already
+# present from the base image, including torch, and is what silently
+# reinstalled a non-cu124 torch build in the first place.
 runpod==1.12.0
 qwen-asr==0.0.6
 librosa==0.11.0
 soundfile==0.14.0
-huggingface_hub==1.32.0
+huggingface_hub==0.36.2
 accelerate==1.12.0
