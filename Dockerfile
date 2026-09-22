@@ -11,7 +11,15 @@ FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --ignore-installed blinker -r requirements.txt
+# --ignore-installed is NOT scoped to a single package in pip -- it applies
+# to the whole install command. Run it in its own invocation, just for the
+# distutils-installed "blinker" conflict, so the requirements.txt install
+# that follows leaves the base image's already-installed torch/torchvision
+# (cu124-matched) untouched instead of silently reinstalling a mismatched
+# torch build from PyPI's default index. This is the actual fix for:
+# RuntimeError: operator torchvision::nms does not exist
+RUN pip install --no-cache-dir --ignore-installed blinker && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Build-time smoke check: fails the image build (and therefore the deploy)
 # if torch/torchvision no longer import cleanly together, or if qwen_asr's
