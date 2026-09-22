@@ -15,16 +15,20 @@ Design:
   a deliberate cost trade-off, not an oversight -- see handler.py comments.
 - Input audio arrives as base64 (appropriate for the short lecture clips this
   app sends; a presigned-URL path can be added later without changing the
-  response contract).
+  response contract). An optional `filename` field lets the worker pick a
+  safe extension hint for the source file; ffmpeg (see audio_decode.py)
+  does the actual container/codec decoding, not librosa/soundfile directly.
 - Never fabricates fields R2T2 doesn't produce (e.g. no invented timestamps).
 """
 import base64
+import binascii
 import os
-import tempfile
 import time
 import traceback
 
 import runpod
+
+from audio_decode import AudioDecodeError, cleanup, decode_audio_to_wav
 
 MODEL_REPO = "netease-youdao/Confucius4-R2T2"
 # No persistent network volume is attached (deliberate cost trade-off: zero
@@ -90,11 +94,20 @@ def _gpu_memory_mb():
 def handler(job):
     job_input = job.get("input", {}) or {}
     audio_b64 = job_input.get("audio_base64")
+    filename = job_input.get("filename")  # optional; basename/extension hint only, never a path
     language = job_input.get("language")  # None/omitted -> Auto
     context_terms = job_input.get("context") or []
 
     if not audio_b64:
         return {"status": "failed", "error": "missing 'audio_base64' in job input"}
+
+    try:
+        audio_bytes = base64.b64decode(audio_b64, validate=True)
+    except (binascii.Error, ValueError):
+        return {"status": "failed", "error": "invalid base64 audio payload"}
+
+    if not audio_bytes:
+        return {"status": "failed", "error": "empty audio payload"}
 
     try:
         _load_model()
@@ -105,15 +118,13 @@ def handler(job):
             "trace": traceback.format_exc(limit=6),
         }
 
-    tmp_path = None
+    src_path = None
+    wav_path = None
     try:
-        audio_bytes = base64.b64decode(audio_b64)
-        with tempfile.NamedTemporaryFile(suffix=".audio", delete=False) as tmp:
-            tmp.write(audio_bytes)
-            tmp_path = tmp.name
+        src_path, wav_path = decode_audio_to_wav(audio_bytes, filename=filename)
 
         import librosa
-        wav, _sr = librosa.load(tmp_path, sr=16000, mono=True)
+        wav, _sr = librosa.load(wav_path, sr=16000, mono=True)
         audio_duration = float(len(wav)) / 16000.0
 
         context_str = ", ".join(context_terms) if context_terms else ""
@@ -145,6 +156,8 @@ def handler(job):
             "gpu_memory_peak_mb": _gpu_memory_mb(),
             "load_time_seconds": _load_time_seconds,
         }
+    except AudioDecodeError as e:
+        return {"status": "failed", "error": f"audio decode failed: {e}"}
     except Exception as e:  # noqa: BLE001
         return {
             "status": "failed",
@@ -152,8 +165,7 @@ def handler(job):
             "trace": traceback.format_exc(limit=6),
         }
     finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        cleanup(src_path, wav_path)
 
 
 runpod.serverless.start({"handler": handler})
