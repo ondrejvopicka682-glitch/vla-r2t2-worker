@@ -9,9 +9,10 @@ Design:
   benchmarking loop") makes a fragile multi-service vLLM setup the wrong
   choice for a first cloud deployment. vLLM can be swapped in later behind
   the same handler contract if throughput ever requires it.
-- The model is cached on a RunPod Network Volume (mounted at /runpod-volume)
-  so it survives across worker starts/restarts and is downloaded from
-  Hugging Face at most once per volume, never per job.
+- No network volume is attached (see MODEL_DIR below for why); the model is
+  cached on the container's own ephemeral disk, so it survives multiple jobs
+  on the SAME warm worker but is re-downloaded on every cold start. This is
+  a deliberate cost trade-off, not an oversight -- see handler.py comments.
 - Input audio arrives as base64 (appropriate for the short lecture clips this
   app sends; a presigned-URL path can be added later without changing the
   response contract).
@@ -26,8 +27,12 @@ import traceback
 import runpod
 
 MODEL_REPO = "netease-youdao/Confucius4-R2T2"
-VOLUME_ROOT = "/runpod-volume"
-MODEL_DIR = os.path.join(VOLUME_ROOT, "models", "Confucius4-R2T2")
+# No persistent network volume is attached (deliberate cost trade-off: zero
+# ongoing storage billing when idle, at the cost of re-downloading the ~4GB
+# checkpoint into the container's ephemeral disk on every cold start). If a
+# network volume is reattached later, point MODEL_DIR at /runpod-volume/...
+# instead and the rest of this file needs no changes.
+MODEL_DIR = "/app/model_cache/Confucius4-R2T2"
 
 _model = None
 _load_time_seconds = None
@@ -35,7 +40,8 @@ _device_name = None
 
 
 def _ensure_model_downloaded():
-    """Downloads the checkpoint into the network volume exactly once. A
+    """Downloads the checkpoint into the container's ephemeral disk once per
+    worker lifetime (not once globally -- see module docstring). A
     marker file (not just directory existence) guards against a partially
     completed prior download being treated as valid."""
     marker = os.path.join(MODEL_DIR, ".download_complete")
