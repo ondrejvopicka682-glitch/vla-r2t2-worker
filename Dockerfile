@@ -10,6 +10,16 @@ FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
 WORKDIR /app
 
+# ffmpeg is the actual audio container/codec decoder (see audio_decode.py).
+# libsndfile (used by soundfile/librosa directly) cannot decode M4A/AAC at
+# all, which is what originally failed with:
+# soundfile.LibsndfileError / audioread.exceptions.NoBackendError.
+# This is a system package via apt, unrelated to the torch/torchvision pip
+# stack above -- installing it does not touch that stack.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 # --ignore-installed is NOT scoped to a single package in pip -- it applies
 # to the whole install command. Run it in its own invocation, just for the
@@ -37,6 +47,30 @@ kept = nms(boxes, scores, 0.5); \
 print('torchvision::nms operator call: OK, kept', kept.tolist()); \
 from qwen_asr.inference.qwen3_asr import Qwen3ASRModel; print('qwen_asr Qwen3ASRModel import: OK (same import path as handler.py)'); \
 print('SMOKE CHECK PASSED')"
+
+COPY audio_decode.py .
+
+# Build-time audio decoding smoke check: exercises the EXACT same
+# decode_audio_to_wav() helper handler.py calls, on an M4A/AAC file (the
+# format that originally failed), without needing the model weights or a
+# GPU. Fails the build if ffmpeg is missing, if M4A/AAC decode breaks, or
+# if the resulting WAV isn't loadable at 16kHz with real samples in it.
+RUN ffmpeg -y -v error -f lavfi -i "sine=frequency=440:duration=1" -ar 16000 -ac 1 -c:a aac /tmp/synth_test.m4a && \
+    python3.11 -c "\
+with open('/tmp/synth_test.m4a', 'rb') as f: \
+    audio_bytes = f.read(); \
+from audio_decode import decode_audio_to_wav, cleanup; \
+src, wav = decode_audio_to_wav(audio_bytes, filename='synth_test.m4a'); \
+import os; \
+assert os.path.exists(wav), 'normalized WAV was not created'; \
+import librosa; \
+data, sr = librosa.load(wav, sr=16000, mono=True); \
+assert sr == 16000, f'unexpected sample rate: {sr}'; \
+assert len(data) > 0, 'decoded audio contains no samples'; \
+print('AUDIO DECODE SMOKE TEST: ffmpeg install OK, M4A/AAC decode OK, normalized WAV OK, librosa load OK, samples=', len(data), 'sr=', sr); \
+cleanup(src, wav); \
+print('AUDIO DECODE SMOKE TEST PASSED')" && \
+    rm -f /tmp/synth_test.m4a
 
 COPY handler.py .
 
