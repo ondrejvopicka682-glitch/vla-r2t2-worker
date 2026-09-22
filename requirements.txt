@@ -1,0 +1,10 @@
+# RunPod serverless worker for Confucius4-R2T2 (CUDA, Transformers backend).
+# Deliberately NOT qwen-asr[vllm] -- see handler.py for why the Transformers
+# backend was chosen for this first deployment.
+runpod
+qwen-asr
+torch
+librosa
+soundfile
+huggingface_hub
+accelerate
